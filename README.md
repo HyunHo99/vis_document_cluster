@@ -1,3 +1,6 @@
+# 소개
+이 리포지토리는 https://github.com/huggingface/text-clustering 리포지토리의 코드를 한국어 버전으로 재가공한 리포지토리입니다.
+
 # Text Clustering
 
 The Text Clustering repository contains tools to easily embed and cluster texts as well as label clusters semantically. This repository is a work in progress and serves as a minimal codebase that can be modified and adapted to other use cases.
