@@ -7,6 +7,7 @@ from collections import Counter, defaultdict
 
 import faiss
 import matplotlib.pyplot as plt
+from matplotlib import font_manager, rc
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -15,15 +16,16 @@ from sentence_transformers import SentenceTransformer
 from sklearn.cluster import DBSCAN
 from tqdm import tqdm
 from umap import UMAP
+from openai import OpenAI
 
 logging.basicConfig(level=logging.INFO)
 
 
 DEFAULT_INSTRUCTION = (
     instruction
-) = "Use three words total (comma separated)\
-to describe general topics in above texts. Under no circumstances use enumeration. \
-Example format: Tree, Cat, Fireman"
+) = "위 텍스트에서 일반적인 주제를 세 단어로(쉼표로 구분하여) 표현하세요.\
+어떤 경우에도 나열을 하지 마세요.\
+예시 형식: 나무, 고양이, 소방관"
 
 DEFAULT_TEMPLATE = "<s>[INST]{examples}\n\n{instruction}[/INST]"
 
@@ -179,14 +181,14 @@ class ClusterClassifier:
 
     def summarize(self, texts, labels):
         unique_labels = len(set(labels)) - 1  # exclude the "-1" label
-        client = InferenceClient(self.summary_model, token=self.summary_model_token)
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         cluster_summaries = {-1: "None"}
 
         for label in range(unique_labels):
             ids = np.random.choice(self.label2docs[label], self.summary_n_examples)
             examples = "\n\n".join(
                 [
-                    f"Example {i+1}:\n{texts[_id][:self.summary_chunk_size]}"
+                    f"예시 {i+1}:\n{texts[_id][:self.summary_chunk_size]}"
                     for i, _id in enumerate(ids)
                 ]
             )
@@ -194,9 +196,21 @@ class ClusterClassifier:
             request = self.summary_template.format(
                 examples=examples, instruction=self.summary_instruction
             )
-            response = client.text_generation(request)
+            # response = client.text_generation(request)
+            message = [
+                    {
+                        "role" : "system",
+                        "content" : "당신은 문서 주제 분류기입니다."
+                    },
+                    {
+                        "role" : "user",
+                        "content" : request
+                    }
+            ]
+            response = client.chat.completions.create(model="gpt-4o-mini", messages=message).choices[0].message.content
             if label == 0:
                 print(f"Request:\n{request}")
+                print(f"Response:\n{response}")
             cluster_summaries[label] = self._postprocess_response(response)
         print(f"Number of clusters is {len(cluster_summaries)}")
         return cluster_summaries
@@ -212,11 +226,13 @@ class ClusterClassifier:
             first_line = response.split("\n")[0]
             topic, score = None, None
             try:
-                topic = first_line.split("Topic:")[1].split("(")[0].split(",")[0].strip()
+                topic = first_line.split("주제:")[1].split("(")[0].split(",")[0].strip()
             except IndexError:
                 print("No topic found")
+                print(first_line)
             try:
-                score = first_line.split("Educational value rating:")[1].strip().split(".")[0].strip()
+                score = first_line.split("교육적 가치 점수:")[1].strip().split(".")[0].strip()
+                print(first_line)
             except IndexError:
                 print("No educational score found")
             full_output = f"{topic}. Educational score: {score}"
@@ -308,6 +324,9 @@ class ClusterClassifier:
             self._show_mpl(df)
 
     def _show_mpl(self, df):
+        plt.rcParams['font.family'] = 'NanumGothic'
+        plt.rcParams['axes.unicode_minus'] = False
+
         fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
 
         df["color"] = df["labels"].apply(lambda x: "C0" if x==-1 else f"C{(x%9)+1}")
@@ -316,10 +335,9 @@ class ClusterClassifier:
             kind="scatter",
             x="X",
             y="Y",
-            c="labels",
             s=0.75,
             alpha=0.8,
-            linewidth=0,
+            linewidth=0, 
             color=df["color"],
             ax=ax,
             colorbar=False,
@@ -328,7 +346,7 @@ class ClusterClassifier:
         for label in self.cluster_summaries.keys():
             if label == -1:
                 continue
-            summary = self.cluster_summaries[label]
+            summary = self.cluster_summaries[label].split("Educational score:")[0].strip()
             position = self.cluster_centers[label]
             t= ax.text(
                 position[0],
